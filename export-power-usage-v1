@@ -1,0 +1,244 @@
+#!/usr/bin/perl
+use diagnostics;
+use warnings;
+use strict;
+#
+# Connect to the portal.originsmart.com.au site and get some detailed usage
+# data
+#
+# Needs packages:
+# libdatetime-format-iso8601-perl
+
+our $VERSION=0;
+
+use LWP::Debug qw(+);
+
+use Getopt::Long 2.33 qw(:config gnu_getopt);
+use Pod::Usage;
+
+use Data::Dumper;
+$Data::Dumper::Indent = 1;
+$Data::Dumper::Sortkeys = 1;
+
+use HTML::Form;
+use HTML::TreeBuilder;
+use HTTP::Date;
+import HTTP::Date qw(time2iso);
+
+use FileHandle;
+
+use JSON;
+
+use DateTime::Format::ISO8601;
+
+
+
+my $option = {
+    autofile => '.',
+    verbose => 1,
+};
+
+
+my $dfprint_fh;
+sub dfprint {
+    if (!$option->{autofile}) {
+        return;
+    }
+    if ($option->{verbose}<1) {
+        return;
+    }
+
+    if (!$dfprint_fh) {
+        my $filename = "$option->{autofile}/debug.txt";
+        my $fh = new FileHandle $filename,"w";
+        if (!defined $fh) {
+            die "could not open $filename $!\n";
+        }
+        $dfprint_fh = $fh;
+    }
+    $dfprint_fh->print(@_);
+}
+
+sub dfprint_res($$);
+sub dfprint_res($$) {
+    my ($desc, $res) = @_;
+
+    if ($res->previous) {
+        dfprint_res($desc.':prev',$res->previous);
+    }
+
+    if ($res->is_error) {
+        print "HTTP ERROR:\n";
+        print "TRANSACTION $desc\n";
+        print "URI: ", $res->request->uri, "\n";
+        print "Status: ", $res->status_line, "\n";
+    }
+
+    dfprint("TRANSACTION $desc\n");
+    dfprint("REQUEST:\n");
+    dfprint($res->request->as_string());
+    dfprint("\n");
+    dfprint("RESPONSE: ",length($res->content)," bytes\n");
+    dfprint($res->as_string(),"\n");
+    dfprint("\n");
+
+    #dfprint("DUMP\n");
+    #dfprint(Dumper($res->request),"\n");
+    #dfprint(Dumper($res),"\n");
+
+}
+
+
+sub http_setup() {
+    use LWP::UserAgent;
+    use HTTP::Cookies;
+    my $ua = LWP::UserAgent->new;
+    $ua->agent("Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.8.1.3) Gecko/20070310");
+    $ua->cookie_jar(HTTP::Cookies->new());
+
+    $ua->protocols_allowed(['https']);
+
+    #$ENV{HTTPS_CA_DIR} = "/etc/ssl/certs";
+    # Print SSL Debug stuff (omit this line if not debugging)
+    #$ENV{HTTPS_DEBUG} = 1;
+
+    # LWP talks about RFC 2616 when it says that POST's cannot redirect
+    # I have looked up the standard and it does not appear to say that
+    #
+    # FIXME - find out why LWP wants this in the face of the above comment
+    push @{ $ua->requests_redirectable }, 'POST';
+
+    return $ua;
+}
+
+sub origin_login($$$) {
+    my ($ua,$userid,$password) = @_;
+
+    my $url_start = 'https://portal.originsmart.com.au/users/sign_in';
+
+    my $req = HTTP::Request->new(GET => $url_start);
+    my $res = $ua->request($req);
+    dfprint_res('login1',$res);
+
+    my $tree = HTML::TreeBuilder->new;
+    $tree->store_comments(1);
+    $tree->parse($res->content);
+    $tree->eof;
+    $tree->elementify;
+
+    my @forms = HTML::Form->parse($res);
+
+    @forms = grep $_->attr("id") eq "user_new", @forms;
+    if (!@forms) {
+        warn "No login form found";
+        return undef;
+    }
+    if (scalar @forms > 1) {
+        warn "Too many forms found";
+        return undef;
+    }
+
+    my $form = shift @forms;
+
+    $form->value('user[email]',$userid);
+    $form->value('user[password]',$password);
+
+    #dfprint_form('login2',$form);
+
+    $req = $form->make_request();
+    $req->header('Referer' => $url_start);
+
+    $res = $ua->request($req);
+    dfprint_res('login2',$res);
+
+    # FIXME - check for invalid login here
+    # "Sorry, that isn't a valid Email/Username and Password combination."
+    my $uri = $res->request->uri;
+    if ($uri !~ m%https://portal.originsmart.com.au/dashboard%) {
+        print "\nERROR: login\n\n";
+        return undef;
+    }
+
+    return $res;
+}
+
+sub origin_used($$$) {
+    my ($ua,$scale,$date) = @_;
+
+    my $datestr = $date->strftime('%d %B %Y');
+
+    my $url = 'https://portal.originsmart.com.au/energy_use/daily_consumption';
+    $url .= '?' . 'scale=' . $scale . ';' . 'day=' . $datestr;
+
+    my $req = HTTP::Request->new(GET => $url);
+    my $res = $ua->request($req);
+    dfprint_res('used',$res);
+
+    if ($res->content_type ne 'application/json') {
+        return undef;
+    }
+
+    return $res->content;
+}
+
+my $ua = http_setup();
+
+if (!defined $ARGV[0]) {
+    die "Need username";
+}
+my $username = shift @ARGV;
+
+if (!defined $ARGV[0]) {
+    die "Need password";
+}
+my $password = shift @ARGV;
+
+my $res = origin_login($ua,$username,$password);
+if (!defined $res) {
+    die "cannot login"
+}
+
+if (!defined $ARGV[0]) {
+    die "Need date";
+}
+
+my $date = DateTime::Format::ISO8601->parse_datetime( $ARGV[0] );
+my $datestr = $date->ymd();
+
+my $jsonstr = origin_used($ua,"quarter_hourly",$date);
+my $json = JSON->new()->utf8();
+my $db = $json->decode($jsonstr);
+
+my $filename1 = $datestr.".json";
+my $fh1 = new FileHandle $filename1,"w";
+if (!defined $fh1) {
+    die "could not open $filename1 $!\n";
+}
+# FIXME - pretty print
+$fh1->write($jsonstr);
+
+my $filename2 = $datestr.".txt";
+my $fh2 = new FileHandle $filename2,"w";
+if (!defined $fh2) {
+    die "could not open $filename2 $!\n";
+}
+
+$fh2->printf("#column 1 timestamp\n");
+$fh2->printf("#column 2 consumption\n");
+$fh2->printf("#column 3 cost\n");
+
+foreach(@{$db}) {
+    my $dt = DateTime::Format::ISO8601->parse_datetime( $_->{from_date} );
+    $fh2->printf("%s %s %s\n",
+        $dt->epoch(),
+        $_->{consumption},
+        $_->{cost},
+    );
+}
+
+# 8 June, 2012
+# 8 June 2012
+# 2012-06-08 "Invalid date format, use a format like '8 June, 2012'"
+#
+#
+
