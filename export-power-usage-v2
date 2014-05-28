@@ -1,0 +1,191 @@
+#!/usr/bin/env perl
+use warnings;
+use strict;
+#
+# login and download usage data from the origin website
+#
+#
+# Needs
+# libdata-rmap-perl
+
+# allow the libs to be in the bin dir
+use FindBin;
+use lib "$FindBin::RealBin/lib";
+use lib "/home/hamish/s/bin/lib";
+
+use Data::Dumper;
+$Data::Dumper::Indent = 1;
+$Data::Dumper::Sortkeys = 1;
+$Data::Dumper::Quotekeys = 0;
+
+use HC::Common;
+
+my $option = {
+};
+my @option_list = (
+    'debug',
+    'username=s',
+    'password=s',
+);
+
+package Origin;
+use warnings;
+use strict;
+#
+#
+#
+
+
+use WWW::Mechanize;
+use JSON;
+#use IO::Socket::SSL;
+
+use URI::Escape;
+
+use Data::Rmap qw(rmap rmap_hash);
+
+use POSIX qw(strftime);
+
+use Data::Dumper;
+$Data::Dumper::Indent = 1;
+$Data::Dumper::Sortkeys = 1;
+
+sub new {
+    my ($class) = shift;
+    my $self = {};
+    $self->{urls}=[];
+    bless $self,$class;
+    $self->{mech} = WWW::Mechanize->new(autocheck=>0);
+
+    # Trial and error determined that the origin website /requires/ an old
+    # ssl version and a useragent that is not the default
+    $self->{mech}->ssl_opts (SSL_version=>'SSLv3');
+    $self->{mech}->agent(
+        'Mozilla/5.0 (X11; Linux x86_64; rv:19.0) Gecko/20100101 Firefox/19.0 Iceweasel/19.0'
+    );
+
+#    $mech->ssl_opts(
+#        SSL_verify_mode => IO::Socket::SSL::SSL_VERIFY_NONE,
+#        verify_hostname => 0,
+#    );
+
+    return $self;
+}
+
+sub dump_json {
+    my ($self) = @_;
+
+    return Dumper($self->{json});
+}
+
+sub login {
+    my ($self,$username,$password) = @_;
+    die "need username, password" if (!$username or !$password);
+
+    my $mech = $self->{mech};
+    $mech->get('https://online.originenergy.com.au/irj/portal');
+    $mech->submit_form(
+        form_name => 'logonForm',
+        fields    => {
+            j_user     => $username,
+            j_password => $password,
+        }
+    );   
+    return $mech->success();
+}
+
+sub addurl {
+    my ($self,$url) = @_;
+
+    if (defined($self->{json}{$url})) {
+        # return the cached copy
+        # TODO - check if it is an error and possibly retry?
+        return $self->{json}{$url};
+    }
+
+    if ($option->{debug}) {
+        print "URL: ",$url,"\n";
+    }
+
+    $self->{mech}->get($url);
+    return undef if (!$self->{mech}->success());
+
+    my $json = JSON->new()->utf8();
+    my $data = $json->decode($self->{mech}->content());
+    if (exists($data->{d}{results})) {
+        # a resultset, so just keep that
+        $self->{json}{$url} = $data->{d}{results};
+    } else {
+        # otherwise, it is an error, so keep the error
+        $self->{json}{$url} = $data;
+    }
+
+    return $self->{json}{$url};    
+}
+
+sub resolve_deferred {
+    my ($self) = @_;
+
+    rmap_hash {
+        if (exists($_->{__deferred})) {
+            my $url = $_->{__deferred}{uri}.'?$format=json';
+            $self->addurl($url);
+        }
+    } $self->{json};
+}
+
+sub resolve_dates {
+    my ($self) = @_;
+
+    rmap {
+        if (m%^/Date\((\d+)\)/$%) {
+            my $time = $1 / 1000;
+            $_ = strftime("%FT%H:%M:%S%z",localtime($time));
+        }
+    } $self->{json};
+}
+
+sub EnergyContracts {
+    my ($self) = @_;
+
+    my $url = 'https://online.originenergy.com.au/sap/opu/odata/sap/ENERGY_MANAGER/EnergyContracts?$format=json&$filter=Status%20eq%20%27Active%27%20and%20SupportsCostConsumption%20eq%20%27Y%27&$expand=ServiceLocation,ServiceLocation/CurrentDate';
+    $self->addurl($url);
+}
+
+sub EnergyConsumptionData1 {
+    my ($self) = @_;
+
+    #my $url = 'https://online.originenergy.com.au/sap/opu/odata/sap/ENERGY_MANAGER/EnergyConsumptionData?$format=json&$filter=ContractNumber%20eq%20%275001883945%27';
+    my $url = 'https://online.originenergy.com.au/sap/opu/odata/sap/ENERGY_MANAGER/EnergyConsumptionData?$format=json&$filter=ContractNumber%20eq%20%275001883945%27%20and%20AggregationLevel%20eq%20%27HOUR%27';
+    # .. FIXME
+    $self->addurl($url);
+}
+
+#$self->addjson('Messages','https://online.originenergy.com.au/sap/opu/odata/sap/ENERGY_MANAGER/Messages?$format=json');
+
+
+package main;
+
+
+
+sub main() {
+    HC::Common::do_options($option,@option_list);
+    exit if ($option->{help});
+
+    my $origin = Origin->new();
+
+    my $r;
+    $r = $origin->login($option->{username},$option->{password});
+    die if (!$r);
+
+    $origin->EnergyContracts();
+    #$origin->resolve_deferred();
+    $origin->resolve_dates();
+
+    #$origin->EnergyConsumptionData1();
+
+    print $origin->dump_json();
+}
+
+main();
+__END__
