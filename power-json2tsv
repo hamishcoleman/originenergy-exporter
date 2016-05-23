@@ -56,6 +56,8 @@ sub open_or_die($) {
     my $fh;
     if ($file =~ m/\.gz$/ ) {
         $fh = IO::File->new("gzip -dc <'$file' |");
+    } elsif ($file =~ m/\.xz$/ ) {
+        $fh = IO::File->new("xz -dc <'$file' |");
     } else {
         $fh = IO::File->new($file,"r");
     }
