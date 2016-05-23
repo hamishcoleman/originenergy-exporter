@@ -1,0 +1,250 @@
+#!/usr/bin/env perl
+use warnings;
+use strict;
+#
+# 
+#
+
+our $VERSION=0;
+
+use Getopt::Long 2.33 qw(:config gnu_getopt);
+use Pod::Usage;
+
+use Data::Dumper;
+$Data::Dumper::Indent = 1;
+$Data::Dumper::Sortkeys = 1;
+
+use HTML::Form;
+use HTML::TreeBuilder;
+
+use DateTime::Format::ISO8601;
+use IO::File;
+
+use JSON;
+
+###############################################################################
+##
+## Standard options processor
+sub do_options {
+    my $option = shift;
+    if (!GetOptions($option,@_)) {
+        print("Options: ",join(", ",@_),"\n");
+        pod2usage(2);
+    }
+    if ($option->{man}) {
+        pod2usage(-exitstatus => 0, -verbose => 2);
+    }
+
+    if ($option->{quiet}) {
+        delete $option->{verbose};
+    }
+}
+
+###############################################################################
+
+my $option={    # set option defaults here
+};
+do_options($option,
+    "man",
+    "debug|d+",
+    "verbose|v+",
+    "username=s",
+    "password=s",
+    "contractid=s",
+    "start=s",
+    "end=s",
+    "output=s",
+);
+
+sub http_setup() {
+    use LWP::UserAgent;
+    use HTTP::Cookies;
+    my $ua = LWP::UserAgent->new;
+    $ua->agent("Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.8.1.3) Gecko/20070310");
+    $ua->cookie_jar(HTTP::Cookies->new());
+
+    # LWP talks about RFC 2616 when it says that POST's cannot redirect
+    # I have looked up the standard and it does not appear to say that
+    #
+    # FIXME - find out why LWP wants this in the face of the above comment
+    push @{ $ua->requests_redirectable }, 'POST';
+
+    $ua->env_proxy();
+    
+    return $ua;
+}
+
+sub origin_login($$$) {
+    my ($ua,$username,$password) = @_;
+
+    my $url_start = "https://www.originenergy.com.au/login.html";
+    my $url_post = "https://www.originenergy.com.au/bin/origin-ui/loginorigin";
+
+    my $req = HTTP::Request->new(GET => $url_start);
+    my $res = $ua->request($req);
+
+    if (!$res) {
+        return undef;
+    }
+
+    my @forms = HTML::Form->parse($res);
+    @forms = grep (($_->attr('id')||'') eq 'main-login', @forms);
+    die "No login form found" unless @forms;
+    my $form = shift @forms;
+
+    $form->value('username',$username);
+    $form->value('password',$password);
+
+    # unfortunately, this is yet another website that uses javascript
+    # for the simplest of forms
+    $form->method('POST');
+    $form->action($url_post);
+
+    $req = $form->make_request();
+    $req->header( Referer => 'https://www.originenergy.com.au/login.html' );
+
+    $res = $ua->request($req);
+
+    my $json = JSON->new->utf8->relaxed->pretty->canonical;
+    $json = $json->decode($res->content);
+
+    if (!$json->{success}) {
+        warn("login did not return success");
+        return (undef,$res);
+    }
+
+    return $json;
+}
+
+sub origin_getAccountProperties($) {
+    my ($ua) = @_;
+
+    my $url_start = "https://www.originenergy.com.au/bin/origin-ui/getAccountProperties";
+
+    my $req = HTTP::Request->new(GET => $url_start);
+    $req->header( Referer => 'https://www.originenergy.com.au/for-home/my-account/usage.html' );
+    my $res = $ua->request($req);
+
+    my $json = JSON->new->utf8->relaxed->pretty->canonical;
+    $json = $json->decode($res->content);
+
+    return $json;
+}
+
+sub origin_getusage($$$$) {
+    my ($ua,$contractid,$start,$end) = @_;
+    my $start_dt;
+    my $end_dt;
+
+    if ($start) {
+        $start_dt = DateTime::Format::ISO8601->parse_datetime($start);
+    } else {
+        $start_dt = DateTime->now()->truncate( to=>'month' );
+    }
+
+    if ($end) {
+        # an end is specified - use it
+        $end_dt = DateTime::Format::ISO8601->parse_datetime($end);
+    } elsif (!$start) {
+        # neither start nor end is given - use today
+        $end_dt = DateTime->today();
+    } else {
+        # we have a start, but not an end - use the end of the month
+        $end_dt = $start_dt->clone()->truncate( to=>'month' )->add( months=>1 )->subtract( seconds=>1 );
+    }
+
+    my $startdate = $start_dt->dmy('/');
+    my $enddate   = $end_dt->dmy('/');
+
+    my $url_start = "https://www.originenergy.com.au/bin/origin-ui/getUsageGraph?contractId=".
+        $contractid."&divisionId=01&startDate=".$startdate."&endDate=".$enddate."&aggregationLevel=HOUR";
+
+    my $req = HTTP::Request->new(GET => $url_start);
+    $req->header( Accept => '*/*' );
+    $req->header( Referer => 'https://www.originenergy.com.au/for-home/my-account/usage.html' );
+
+    my $res = $ua->request($req);
+
+    if (!$res) {
+        return (undef,$res);
+    }
+
+    #my $json = JSON->new->utf8->relaxed->pretty->canonical;
+    #$json = $json->decode($res->content);
+    #return $json;
+
+    return $res->content;
+}
+
+sub output_data($$) {
+    my ($name,$data) = @_;
+
+    if ($option->{output} eq 'file') {
+        my $fh = IO::File->new($name,'w');
+
+        if (!defined($fh)) {
+            warn("could not open $name: $!\n");
+            return undef;
+        }
+
+        print ("Saving data to $name ...\n");        
+        print $fh $data;
+    } else {
+        print $data;
+    }
+}
+
+sub main {
+    die("need username") if (!$option->{username});
+    die("need password") if (!$option->{password});
+
+    my $ua = http_setup();
+    my $db;
+
+    my $tmp;
+
+    $tmp = origin_login($ua, $option->{username},$option->{password} );
+    push @{$db->{results}}, $tmp;
+
+    # fixme - if not success exit
+
+    if (!$option->{contractid}) {
+        $tmp = origin_getAccountProperties($ua);
+        push @{$db->{results}}, $tmp;
+
+        print("Need contractid - select one of:\n");
+        for my $contract (values(%{$tmp->{contracts}})) {
+            print(
+                "\t",$contract->{contractId},
+                "\t",$contract->{premiseId},
+                "\t",$contract->{productId},
+                "\n",
+            );
+        }
+        if ($option->{debug}) {
+            print Dumper($db);
+        }
+        return 1;
+    }
+
+    if ($option->{start} || $option->{end}) {
+        $tmp = origin_getusage($ua, $option->{contractid}, $option->{start}, $option->{end});
+        output_data($option->{start}.'.json',$tmp);
+        push @{$db->{results}}, $tmp;
+    }
+
+    for my $start (@ARGV) {
+        $tmp = origin_getusage($ua, $option->{contractid}, $start, undef);
+        output_data($start.'.json',$tmp);
+        push @{$db->{results}}, $tmp;
+    }
+
+
+
+    if ($option->{debug}) {
+        print Dumper($db);
+    }
+}
+main();
+
+
