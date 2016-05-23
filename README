@@ -1,3 +1,12 @@
 This repository contains some tools for extracting the historical energy usage
 from the originenergy.com.au website
 
+There are three exporters included:
+* v1 - an exporter for the original originenergy beta website.
+    Do not use.
+
+* v2 - Only partially working exporter for the SAP version of the website
+    Do not use.
+
+* export-power-usage - exporter for the current originenergy website.
+
