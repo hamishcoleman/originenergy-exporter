@@ -1,0 +1,204 @@
+#!/usr/bin/env perl
+use warnings;
+use strict;
+#
+# given json data from the origin energy export, convert it to a graphable
+# space-separated-file format
+#
+
+our $VERSION=0;
+
+use Getopt::Long 2.33 qw(:config gnu_getopt);
+use Pod::Usage;
+
+use Data::Dumper;
+$Data::Dumper::Indent = 1;
+$Data::Dumper::Sortkeys = 1;
+
+use IO::File;
+
+use DateTime::Format::ISO8601;
+use DateTime::Format::Strptime;
+use DateTime::TimeZone;
+
+use JSON;
+
+###############################################################################
+##
+## Standard options processor
+sub do_options {
+    my $option = shift;
+    if (!GetOptions($option,@_)) {
+        print("Options: ",join(", ",@_),"\n");
+        pod2usage(2);
+    }
+    if ($option->{man}) {
+        pod2usage(-exitstatus => 0, -verbose => 2);
+    }
+
+    if ($option->{quiet}) {
+        delete $option->{verbose};
+    }
+}
+
+###############################################################################
+
+my $option={    # set option defaults here
+};
+do_options($option,
+    "man",
+    "debug|d+",
+    "verbose|v+",
+);
+
+sub open_or_die($) {
+    my ($file) = @_;
+    my $fh;
+    if ($file =~ m/\.gz$/ ) {
+        $fh = IO::File->new("gzip -dc <'$file' |");
+    } else {
+        $fh = IO::File->new($file,"r");
+    }
+    if (!defined $fh) {
+        die "could not open $file: $!";
+    }
+    return $fh;
+}
+
+sub json_load($) {
+    my ($filename) = @_;
+
+    my $fh_in = open_or_die($filename);
+
+    my $jsonstr = <$fh_in>;
+    my $json = JSON->new()->utf8();
+    return $json->decode($jsonstr);
+}
+
+# the version 1 website had a relatively simple json format
+#
+sub render_v1($) {
+    my ($db) = @_;
+
+    my $LocalTZ = DateTime::TimeZone->new( name => 'local' );
+
+    foreach(@{$db}) {
+        my $from = DateTime::Format::ISO8601->parse_datetime( $_->{from_date} );
+        my $to = DateTime::Format::ISO8601->parse_datetime( $_->{to_date} );
+        $from->set_time_zone($LocalTZ);
+        $to->set_time_zone($LocalTZ);
+
+        my $year = $from->clone()->truncate(to=>'year');
+        my $second_of_year = $from->epoch() - $year->epoch();
+
+        my $day = $from->clone()->truncate(to=>'day');
+        my $second_of_day = $from->epoch() - $day->epoch();
+
+        my $duration = $to->epoch() - $from->epoch();
+        my $cvt2hourly;
+        if ($duration) {
+            $cvt2hourly = (60*60) / $duration;
+        } else {
+            $cvt2hourly = 0;    # FIXME - why are there duration=0 entries?
+        }
+
+        print(join(' ',
+            $from->epoch(),
+            $_->{from_date},
+            $second_of_year,
+            $second_of_day,
+            $_->{consumption} * $cvt2hourly, # TODO - make the convert optional
+            $_->{cost},
+        ),"\n");
+    }
+}
+
+# The current json has more details, but is nested deeper too..
+sub render_v2($) {
+    my ($db) = @_;
+
+    my @contracts = keys(%{$db});
+    if (scalar(@contracts)>1) {
+        die("More than one contractid found");
+    }
+
+    my $parser = DateTime::Format::Strptime->new(
+        pattern => "%d %b, %Y %H:%M",
+        time_zone => 'local', # FIXME - inevitably wrong at some point
+    );
+
+    my $entries;
+    for my $day (values(%{$db->{$contracts[0]}})) {
+        for my $hour (values(%{$day})) {
+            my $dt = $parser->parse_datetime($hour->{calenderUnit});
+            $hour->{calenderUnit_dt} = $dt;
+            $entries->{$dt->epoch()} = $hour;
+        }
+    }
+
+    my $prev_second_of_day = 60*60*24 +1;
+
+    for my $time (sort(keys(%{$entries}))) {
+        my $entry = $entries->{$time};
+        my $year = $entry->{calenderUnit_dt}->clone()->truncate(to=>'year');
+        my $second_of_year = $entry->{calenderUnit_dt}->epoch() - $year->epoch();
+        my $day = $entry->{calenderUnit_dt}->clone()->truncate(to=>'day');
+        my $second_of_day = $entry->{calenderUnit_dt}->epoch() - $day->epoch();
+
+        # If we ever see other units of measurement here, we should
+        # implement a unit conversion thing
+        die("not kWh") if ($entry->{consumptionUom} ne 'kWh');
+        die("not kWh") if ($entry->{feedinConsumptionUom} ne 'kWh');
+
+        if ($second_of_day < $prev_second_of_day) {
+            print("\n");
+        }
+        $prev_second_of_day=$second_of_day;
+
+        print(join(' ',
+            $time,
+            $entry->{calenderUnit_dt}->strftime("%FT%H:%M:%S%z"),
+            $second_of_year,
+            $second_of_day,
+            $entry->{energyConsumption},
+            $entry->{energyCost},
+            -$entry->{feedinConsumption},
+            $entry->{feedinCost},
+        ),"\n");
+    }
+}
+
+sub do_one_file($) {
+    my ($filename) = @_;
+
+    my $db = json_load($filename);
+
+    if (ref($db) eq 'ARRAY') {
+        render_v1($db);
+    } else {
+        render_v2($db);
+    }
+    print("\n");
+    print("\n");
+}
+
+sub render_header {
+    my @columns = qw(
+        timestamp datetime second_of_year second_of_day consumption cost feedin feedinCost
+    );
+    print("#",join(",",@columns),"\n");
+    my $i = 1;
+    for my $name (@columns) {
+        print("#column ",$i++," ",$name,"\n");
+    }
+}
+
+sub main {
+    render_header();
+    for my $filename (@ARGV) {
+        do_one_file($filename);
+    }
+}
+main();
+
+

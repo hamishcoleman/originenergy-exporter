@@ -10,3 +10,8 @@ There are three exporters included:
 
 * export-power-usage - exporter for the current originenergy website.
 
+There is one reporting tool, converting the raw json data into graphable
+whitespace-separated data
+
+* power-json2tsv
+
