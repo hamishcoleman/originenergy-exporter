@@ -72,6 +72,7 @@ sub json_load($) {
 
     my $fh_in = open_or_die($filename);
 
+    local $/; # slirp mode
     my $jsonstr = <$fh_in>;
     my $json = JSON->new()->utf8();
     return $json->decode($jsonstr);
