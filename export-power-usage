@@ -169,9 +169,7 @@ sub origin_getusage($$$$) {
         return (undef,$res);
     }
 
-    #my $json = JSON->new->utf8->relaxed->pretty->canonical;
-    #$json = $json->decode($res->content);
-    #return $json;
+    output_data($start_dt->ymd('').'-'.$end_dt->ymd('').'.json',$res->content);
 
     return $res->content;
 }
@@ -180,14 +178,19 @@ sub output_data($$) {
     my ($name,$data) = @_;
 
     if ($option->{output} eq 'file') {
-        my $fh = IO::File->new($name,'w');
+        my $filename = $name;
+        my $index;
+        while ( -e $filename ) {
+            $filename = $name .'.'. ++$index;
+        }
+        my $fh = IO::File->new($filename,'w');
 
         if (!defined($fh)) {
-            warn("could not open $name: $!\n");
+            warn("could not open $filename: $!\n");
             return undef;
         }
 
-        print ("Saving data to $name ...\n");        
+        print ("Saving data to $filename ...\n");
         print $fh $data;
     } else {
         print $data;
@@ -229,13 +232,11 @@ sub main {
 
     if ($option->{start} || $option->{end}) {
         $tmp = origin_getusage($ua, $option->{contractid}, $option->{start}, $option->{end});
-        output_data($option->{start}.'.json',$tmp);
         push @{$db->{results}}, $tmp;
     }
 
     for my $start (@ARGV) {
         $tmp = origin_getusage($ua, $option->{contractid}, $start, undef);
-        output_data($start.'.json',$tmp);
         push @{$db->{results}}, $tmp;
     }
 
