@@ -54,6 +54,7 @@ do_options($option,
     "start=s",
     "end=s",
     "output=s",
+    "pretty!",
 );
 
 sub http_setup() {
@@ -70,7 +71,7 @@ sub http_setup() {
     push @{ $ua->requests_redirectable }, 'POST';
 
     $ua->env_proxy();
-    
+
     return $ua;
 }
 
@@ -176,6 +177,12 @@ sub origin_getusage($$$$) {
 
 sub output_data($$) {
     my ($name,$data) = @_;
+
+    if ($option->{pretty}) {
+        my $json = JSON->new->utf8->relaxed->pretty->canonical;
+        $data = $json->decode($data);
+        $data = $json->encode($data);
+    }
 
     if ($option->{output} eq 'file') {
         my $filename = $name;
