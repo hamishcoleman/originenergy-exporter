@@ -171,6 +171,7 @@ sub origin_getusage($$$$) {
     }
 
     output_data($start_dt->ymd('').'-'.$end_dt->ymd('').'.json',$res->content);
+    # FIXME - catch propogated error and show some diagnostics..
 
     return $res->content;
 }
@@ -180,7 +181,7 @@ sub output_data($$) {
 
     if ($option->{pretty}) {
         my $json = JSON->new->utf8->relaxed->pretty->canonical;
-        $data = $json->decode($data);
+        $data = $json->decode($data); # FIXME - catch errors and propogate up
         $data = $json->encode($data);
     }
 
