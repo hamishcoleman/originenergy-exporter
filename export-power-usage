@@ -133,26 +133,7 @@ sub origin_getAccountProperties($) {
 }
 
 sub origin_getusage($$$$) {
-    my ($ua,$contractid,$start,$end) = @_;
-    my $start_dt;
-    my $end_dt;
-
-    if ($start) {
-        $start_dt = DateTime::Format::ISO8601->parse_datetime($start);
-    } else {
-        $start_dt = DateTime->now()->truncate( to=>'month' );
-    }
-
-    if ($end) {
-        # an end is specified - use it
-        $end_dt = DateTime::Format::ISO8601->parse_datetime($end);
-    } elsif (!$start) {
-        # neither start nor end is given - use today
-        $end_dt = DateTime->today();
-    } else {
-        # we have a start, but not an end - use the end of the month
-        $end_dt = $start_dt->clone()->truncate( to=>'month' )->add( months=>1 )->subtract( seconds=>1 );
-    }
+    my ($ua,$contractid,$start_dt,$end_dt) = @_;
 
     my $startdate = $start_dt->dmy('/');
     my $enddate   = $end_dt->dmy('/');
@@ -255,9 +236,27 @@ sub main {
     }
 
     for my $entry (@dates) {
-        $tmp = origin_getusage(
-            $ua, $option->{contractid}, $entry->{start}, $entry->{end}
-        );
+        my $start_dt;
+        my $end_dt;
+
+        if ($entry->{start}) {
+            $start_dt = DateTime::Format::ISO8601->parse_datetime($entry->{start});
+        } else {
+            $start_dt = DateTime->now()->truncate( to=>'month' );
+        }
+
+        if ($entry->{end}) {
+            # an end is specified - use it
+            $end_dt = DateTime::Format::ISO8601->parse_datetime($entry->{end});
+        } elsif (!$entry->{start}) {
+            # neither start nor end is given - use today
+            $end_dt = DateTime->today();
+        } else {
+            # we have a start, but not an end - use the end of the month
+            $end_dt = $start_dt->clone()->truncate( to=>'month' )->add( months=>1 )->subtract( seconds=>1 );
+        }
+
+        $tmp = origin_getusage( $ua, $option->{contractid}, $start_dt, $end_dt );
         push @{$db->{results}}, $tmp;
     }
 
