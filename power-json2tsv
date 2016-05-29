@@ -141,6 +141,8 @@ sub render_v2($) {
 
     my $prev_second_of_day = 60*60*24 +1;
 
+    my $uom_warn;
+
     for my $time (sort(keys(%{$entries}))) {
         my $entry = $entries->{$time};
         my $year = $entry->{calenderUnit_dt}->clone()->truncate(to=>'year');
@@ -148,10 +150,27 @@ sub render_v2($) {
         my $day = $entry->{calenderUnit_dt}->clone()->truncate(to=>'day');
         my $second_of_day = $entry->{calenderUnit_dt}->epoch() - $day->epoch();
 
+        if (!$entry->{consumptionUom} || !$entry->{feedinConsumptionUom}) {
+            # often, the feed returns a value of null for half the bits
+            # handle that, but not very well
+
+            if (!$uom_warn) {
+                my $err = "Null values seen in input - data is bad";
+                warn($err);
+                print("# ",$err,"\n");
+                $uom_warn++;
+            }
+            print(join(' ',
+                $time,
+                $entry->{calenderUnit_dt}->strftime("%FT%H:%M:%S%z"),
+            ),"\n");
+            next;
+        }
+
         # If we ever see other units of measurement here, we should
         # implement a unit conversion thing
-        die("not kWh") if ($entry->{consumptionUom} ne 'kWh');
-        die("not kWh") if ($entry->{feedinConsumptionUom} ne 'kWh');
+        die("consumptionUom not kWh") if ($entry->{consumptionUom} ne 'kWh');
+        die("feedinConsumptionUom not kWh") if ($entry->{feedinConsumptionUom} ne 'kWh');
 
         if ($second_of_day < $prev_second_of_day) {
             print("\n");
