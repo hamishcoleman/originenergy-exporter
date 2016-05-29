@@ -184,6 +184,43 @@ sub output_data($$) {
     }
 }
 
+sub data_valid($) {
+    my ($data) = @_;
+
+    my $json = JSON->new->utf8->relaxed->pretty->canonical;
+    $data = $json->decode($data);
+    # FIXME - catch fatal errors in decode
+
+    my @contracts = keys(%{$data});
+    if (scalar(@contracts)==0) {
+        warn("must have at least one contract");
+        return 0;
+    }
+
+    my @days = keys(%{$data->{$contracts[0]}});
+    if (scalar(@days)==0) {
+        warn("must have at least one day in the first contract");
+        return 0;
+    }
+
+    my @entries = keys(%{$data->{$contracts[0]}{$days[0]}});
+    if (scalar(@days)==0) {
+        warn("must have at least one time-period in the first contract");
+        return 0;
+    }
+
+    my $entry = $data->{$contracts[0]}{$days[0]}{$entries[0]};
+
+    for my $i (qw(consumption consumptionUom cost energyConsumption energyCost feedinConsumption feedinConsumptionUom)) {
+        if (!defined($entry->{$i})) {
+            warn("field '",$i,"' must not be null");
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 sub main {
     die("need username") if (!$option->{username});
     die("need password") if (!$option->{password});
@@ -233,6 +270,8 @@ sub main {
         push @dates, $entry;
     }
 
+    my $error_count=0;
+
     for my $entry (@dates) {
         my $start_dt;
         my $end_dt;
@@ -257,13 +296,21 @@ sub main {
         $tmp = origin_getusage( $ua, $option->{contractid}, $start_dt, $end_dt );
         push @{$db->{results}}, $tmp;
 
-        output_data($start_dt->ymd('').'-'.$end_dt->ymd('').'.json',$tmp);
-        # FIXME - catch propogated error and show some diagnostics..
+        if (data_valid($tmp)) {
+            output_data($start_dt->ymd('').'-'.$end_dt->ymd('').'.json',$tmp);
+            # FIXME - catch any propogated error and show some diagnostics..
+        } else {
+            warn("Data fetched for ",$start_dt->ymd('').'-'.$end_dt->ymd('')," did not look valid\n");
+            $error_count++;
+        }
     }
 
 
     if ($option->{debug}) {
         print Dumper($db);
+    }
+    if ($error_count) {
+        exit(1);
     }
 }
 main();
