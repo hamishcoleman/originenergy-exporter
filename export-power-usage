@@ -238,16 +238,28 @@ sub main {
         return 1;
     }
 
+    my @dates;
+
     if ($option->{start} || $option->{end}) {
-        $tmp = origin_getusage($ua, $option->{contractid}, $option->{start}, $option->{end});
-        push @{$db->{results}}, $tmp;
+        my $entry;
+        $entry->{start} = $option->{start};
+        $entry->{end}   = $option->{end};
+        push @dates,$entry;
     }
 
     for my $start (@ARGV) {
-        $tmp = origin_getusage($ua, $option->{contractid}, $start, undef);
-        push @{$db->{results}}, $tmp;
+        my $entry;
+        $entry->{start} = $start;
+        $entry->{end}   = undef;
+        push @dates, $entry;
     }
 
+    for my $entry (@dates) {
+        $tmp = origin_getusage(
+            $ua, $option->{contractid}, $entry->{start}, $entry->{end}
+        );
+        push @{$db->{results}}, $tmp;
+    }
 
 
     if ($option->{debug}) {
