@@ -151,9 +151,7 @@ sub origin_getusage($$$$) {
         return (undef,$res);
     }
 
-    output_data($start_dt->ymd('').'-'.$end_dt->ymd('').'.json',$res->content);
-    # FIXME - catch propogated error and show some diagnostics..
-
+    # FIXME - handle errors better here
     return $res->content;
 }
 
@@ -258,6 +256,9 @@ sub main {
 
         $tmp = origin_getusage( $ua, $option->{contractid}, $start_dt, $end_dt );
         push @{$db->{results}}, $tmp;
+
+        output_data($start_dt->ymd('').'-'.$end_dt->ymd('').'.json',$tmp);
+        # FIXME - catch propogated error and show some diagnostics..
     }
 
 
