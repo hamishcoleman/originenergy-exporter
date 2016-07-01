@@ -240,6 +240,7 @@ sub main {
         push @{$db->{results}}, $tmp;
 
         print("Need contractid - select one of:\n");
+        print("\tcontractId\tpremiseId\tproductId\n");
         for my $contract (values(%{$tmp->{contracts}})) {
             print(
                 "\t",$contract->{contractId},
