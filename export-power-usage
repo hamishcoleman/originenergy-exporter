@@ -55,6 +55,7 @@ do_options($option,
     "end=s",
     "output=s",
     "pretty!",
+    "ignore-validity!",
 );
 
 sub http_setup() {
@@ -297,7 +298,7 @@ sub main {
         $tmp = origin_getusage( $ua, $option->{contractid}, $start_dt, $end_dt );
         push @{$db->{results}}, $tmp;
 
-        if (data_valid($tmp)) {
+        if (data_valid($tmp) || $option->{"ignore-validity"}) {
             output_data($start_dt->ymd('').'-'.$end_dt->ymd('').'.json',$tmp);
             # FIXME - catch any propogated error and show some diagnostics..
         } else {
