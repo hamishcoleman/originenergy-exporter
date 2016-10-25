@@ -7,8 +7,11 @@ use strict;
 
 our $VERSION=0;
 
-use Getopt::Long 2.33 qw(:config gnu_getopt);
-use Pod::Usage;
+# allow the libs to be in the bin dir
+use File::Spec;
+use FindBin;
+use lib File::Spec->catdir($FindBin::RealBin,"lib");
+use lib File::Spec->catdir($ENV{HOME},"s/bin/lib");
 
 use Data::Dumper;
 $Data::Dumper::Indent = 1;
@@ -22,30 +25,11 @@ use IO::File;
 
 use JSON;
 
-###############################################################################
-##
-## Standard options processor
-sub do_options {
-    my $option = shift;
-    if (!GetOptions($option,@_)) {
-        print("Options: ",join(", ",@_),"\n");
-        pod2usage(2);
-    }
-    if ($option->{man}) {
-        pod2usage(-exitstatus => 0, -verbose => 2);
-    }
-
-    if ($option->{quiet}) {
-        delete $option->{verbose};
-    }
-}
-
-###############################################################################
+use HC::Common;
 
 my $option={    # set option defaults here
 };
-do_options($option,
-    "man",
+HC::Common::do_options($option,
     "debug|d+",
     "verbose|v+",
     "username=s",
@@ -57,6 +41,8 @@ do_options($option,
     "pretty!",
     "ignore-validity!",
 );
+exit if (defined($option->{help}));
+
 
 sub http_setup() {
     use LWP::UserAgent;
