@@ -1,12 +1,25 @@
 This repository contains some tools for extracting the historical energy usage
 from the originenergy.com.au website
 
+Unfortunately, the current origin energy website only offers per-day
+data, which is pretty much useless for using to determine usage patterns.
+They have also "improved" the website, so the v3 exporter no longer works.
+
+They do have the option to download your data as a CSV, but it is bill totals
+data and not daily usage data, so again not useful.
+
+Finally, they do have a "Request my usage data" option, but it takes up to 20
+business days for them to provide that data - and it is unclear what the
+contents are.
+
 There are three exporters included:
 * v1 - an exporter for the original originenergy beta website.
     Do not use.
 
 * v2 - Only partially working exporter for the SAP version of the website
     Do not use.
+
+* v3 - Exporter for a previous version of the Origin Energy Website
 
 * export-power-usage - exporter for the current originenergy website.
 
